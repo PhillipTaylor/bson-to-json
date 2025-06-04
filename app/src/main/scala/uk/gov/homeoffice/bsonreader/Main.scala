@@ -2,11 +2,6 @@ package uk.gov.homeoffice.bsonreader
 
 import cats.data.*
 import cats.effect.*
-import cats.effect.implicits.{*, given}
-import cats.effect.unsafe.implicits.global
-import cats.implicits.{*, given}
-
-import com.mongodb.*
 import com.typesafe.config.*
 
 import java.io.*
@@ -16,6 +11,11 @@ import java.util.zip.GZIPInputStream
 
 import org.bson.*
 import org.bson.conversions.*
+import cats.effect.implicits.{*, given}
+import cats.effect.unsafe.implicits.global
+import cats.implicits.{*, given}
+
+import com.mongodb.*
 import org.bson.json.*
 import _root_.io.circe.*
 import _root_.io.circe.parser.*
@@ -41,8 +41,12 @@ object MainApp extends IOApp:
     parse(jsonString).left.map { case ex => ex.getMessage }
   }
 
-  def bsonReader(filename :String) :fs2.Stream[IO, _root_.io.circe.Json] = {
-    val inputStream = new BufferedInputStream(GZIPInputStream(new BufferedInputStream(new FileInputStream(filename))))
+  def bsonReader(filename :String, gzipMode :Boolean) :fs2.Stream[IO, _root_.io.circe.Json] = {
+    val inputStream = gzipMode match {
+      case true => new BufferedInputStream(GZIPInputStream(new BufferedInputStream(new FileInputStream(filename))))
+      case false => new BufferedInputStream(new FileInputStream(filename))
+    }
+
     fs2.Stream.repeatEval { nextBsonObject(inputStream) }.unNoneTerminate
       .collect { case Right(json) => json }
   }
@@ -102,18 +106,36 @@ object MainApp extends IOApp:
   def noOpFlatten(json :Json) :Json = json
 
   def run(args: List[String]): IO[ExitCode] = {
-    val inputFile = args(0)
-    val outputFile = args(1)
+
+    if (args.contains("--help") || args.contains("-h")) {
+      println("bson to json convertor")
+      println("java -jar bson-to-json.jar <input-file> <output-file>")
+      println("    --gzip: read from bson.gz files (when mongodump is used with --gzip)")
+      println("    --pandas: flattens nested json into single depth json array so { 'hello' : { 'thing' : 4 }} becomes { 'hello.thing' : 4 }")
+      println("    -h or --help: print help message and exit")
+      return IO(ExitCode.Success)
+    } else if (args.length < 2) {
+      println("bson to json convertor")
+      println(s"expected two arguments, got ${args.length}")
+      return IO(ExitCode.Success)
+    }
+
+    val nonSpecialArgs = args.filterNot(_.startsWith("--"))
+
+    val inputFile = nonSpecialArgs(0)
+    val outputFile = args.lift(1).getOrElse(inputFile + ".json")
+
     val pandasMode = args.contains("--pandas")
+    val gzipMode = args.contains("--gzip")
 
     val fos = new FileOutputStream(outputFile)
 
-    if (pandasMode) { fos.write("[\n".getBytes) }
+    if (!pandasMode) { fos.write("[\n".getBytes) }
 
     val stringifier = if (pandasMode) writePandasJson else writeNormalJson
     val flattener = if (pandasMode) jsonFlatten else noOpFlatten
 
-    bsonReader(inputFile)
+    bsonReader(inputFile, gzipMode)
       .zipWithIndex
       .evalTap { (_, idx) => IO(if (idx % 100000 == 0) { println(s"Written $idx") }) }
       .map { (json, _) => flattener(json) }

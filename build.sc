@@ -1,6 +1,7 @@
+package build
 import mill._, scalalib._
 
-object foo extends RootModule with ScalaModule {
+object app extends ScalaModule {
   def scalaVersion = "3.3.1"
   def ivyDeps = Agg(
     ivy"com.lihaoyi::scalatags:0.12.0",
