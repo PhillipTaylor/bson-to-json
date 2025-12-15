@@ -158,11 +158,13 @@ object MainApp extends IOApp:
       .zipWithIndex
       .evalTap { (_, idx) => IO(if (idx % 100000 == 0) { println(s"Written $idx") }) }
       .map { (json, idx) => (flattener(json), idx) }
-      .map { (json, idx) => stringifier(writer, json, idx) }
+      .map { (json, idx) => (stringifier(writer, json, idx), idx) }
+      .map { (_, idx) => idx }
       .compile
-      .drain
-      .map { _ =>
+      .last
+      .map { lastIdx =>
         if (!pandasMode) { writer.write("]".getBytes) }
+        println(s"Written ${lastIdx.getOrElse(0)}. Finished")
         writer.close()
       }
       .as(ExitCode(0))
