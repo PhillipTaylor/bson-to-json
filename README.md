@@ -6,10 +6,10 @@ This application converts Mongodump's bson.gz files into pure json files. The JS
 ## Running the app
 
 ```bash
-java -jar bson-to-json.jar mycollection.bson.gz output.json
+java -jar bson-to-json.jar mycollection.bson.gz output.json.gz
 
 # argument 1: The bson.gz file to read
-# argument 2: The file to write the json into
+# argument 2: The file to write the json into. (.gz is optional but adds compression)
 ```
 
 ## Design
@@ -46,8 +46,23 @@ You can pass a `--pandas` argument into this app to make it skip the outer array
 { "id" : 2, "name": "loretta" }
 ```
 
-This is also helpful when loading the data into elasticsearch as well.
+This is also helpful when loading the data into elasticsearch as well. This format is sometimes refered to as JSONL.
+
+The other thing that `--pandas` mode does is flatten nested JSON:
+
+```
+[
+    { "chocolate": { "pudding" : true }},
+    { "after" : [ { "eight" : true }, { "eight" : { "check" : false }}}
+]
+```
+would become:
+
+```
+{ "chocolate.pudding": true }
+{ "after.0.eight" : true, "after.1.eight.check" : false }
+```
 
 ## Deployment
 
-Java's slogan is "write-once, run anywhere". You can download the jar from the github releases and run it on any JVM > JDK 17.
+Java's slogan is "write-once, run anywhere". You can download the jar from the github releases link and run it on any JVM > JDK 17.
