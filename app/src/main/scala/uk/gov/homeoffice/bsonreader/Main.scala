@@ -7,7 +7,7 @@ import com.typesafe.config.*
 import java.io.*
 import fs2.io.file.{Files => FS2Files, Path}
 import java.nio.file.{Files => NioFiles, Paths}
-import java.util.zip.GZIPInputStream
+import java.util.zip.{GZIPInputStream, GZIPOutputStream}
 
 import org.bson.*
 import org.bson.conversions.*
@@ -41,8 +41,8 @@ object MainApp extends IOApp:
     parse(jsonString).left.map { case ex => ex.getMessage }
   }
 
-  def bsonReader(filename :String, gzipMode :Boolean) :fs2.Stream[IO, _root_.io.circe.Json] = {
-    val inputStream = gzipMode match {
+  def bsonReader(filename :String) :fs2.Stream[IO, _root_.io.circe.Json] = {
+    val inputStream = filename.endsWith(".gz") match {
       case true => new BufferedInputStream(GZIPInputStream(new BufferedInputStream(new FileInputStream(filename))))
       case false => new BufferedInputStream(new FileInputStream(filename))
     }
@@ -51,12 +51,21 @@ object MainApp extends IOApp:
       .collect { case Right(json) => json }
   }
 
-  def writeNormalJson(fos: FileOutputStream, json :Json) :Unit = {
-    fos.write(json.spaces4.getBytes)
-    fos.write(",\n".getBytes)
+  def jsonWriter(filename :String) :OutputStream = {
+    filename.endsWith(".gz") match {
+      case true => new GZIPOutputStream(new FileOutputStream(filename))
+      case false => new FileOutputStream(filename)
+    }
   }
 
-  def writePandasJson(fos :FileOutputStream, json :Json) :Unit = {
+  def writeNormalJson(fos: OutputStream, json :Json, idx :Long) :Unit = {
+    if (idx > 0) {
+      fos.write(",\n".getBytes)
+    }
+    fos.write(json.spaces4.getBytes)
+  }
+
+  def writePandasJson(fos :OutputStream, json :Json, idx :Long) :Unit = {
     fos.write(json.noSpaces.getBytes)
     fos.write("\n".getBytes)
   }
@@ -109,9 +118,11 @@ object MainApp extends IOApp:
 
     if (args.contains("--help") || args.contains("-h")) {
       println("bson to json convertor")
-      println("java -jar bson-to-json.jar <input-file> <output-file>")
-      println("    --gzip: read from bson.gz files (when mongodump is used with --gzip)")
+      println("java -jar bson-to-json.jar [--pandas] <input-file> <output-file>")
       println("    --pandas: flattens nested json into single depth json array so { 'hello' : { 'thing' : 4 }} becomes { 'hello.thing' : 4 }")
+      println("If the input file ends .gz then the file will be run through gzip decompression")
+      println("If the output file ends .json then the file will be json encoded, it if ends .csv it will be csv encoded")
+      println("If the output file ends .gz then the file will be compressed through gzip decompression")
       println("    -h or --help: print help message and exit")
       return IO(ExitCode.Success)
     } else if (args.length < 2) {
@@ -120,31 +131,39 @@ object MainApp extends IOApp:
       return IO(ExitCode.Success)
     }
 
-    val nonSpecialArgs = args.filterNot(_.startsWith("--"))
-
-    val inputFile = nonSpecialArgs(0)
-    val outputFile = args.lift(1).getOrElse(inputFile + ".json")
+    val inputFile = args.filterNot(_.startsWith("--")).lift(0).getOrElse("")
+    val outputFile = args.filterNot(_.startsWith("--")).lift(1).getOrElse(inputFile match {
+      case s if s.endsWith(".bson.gz") => s.slice(0, s.length - 8) + ".json.gz"
+      case s if s.endsWith(".bson") => s.slice(0, s.length - 5) + ".json"
+      case _ => inputFile + ".json"
+    })
 
     val pandasMode = args.contains("--pandas")
-    val gzipMode = args.contains("--gzip")
 
-    val fos = new FileOutputStream(outputFile)
+    println(s"\nArguments read:\nInput file: $inputFile\nOutput file: $outputFile\nPandas Mode: $pandasMode\n")
 
-    if (!pandasMode) { fos.write("[\n".getBytes) }
+    if (!NioFiles.exists(Paths.get(inputFile))) {
+      println(s"Input file does not exist: $inputFile")
+      sys.exit(1)
+    }
+
+    val writer = jsonWriter(outputFile)
+
+    if (!pandasMode) { writer.write("[\n".getBytes) }
 
     val stringifier = if (pandasMode) writePandasJson else writeNormalJson
     val flattener = if (pandasMode) jsonFlatten else noOpFlatten
 
-    bsonReader(inputFile, gzipMode)
+    bsonReader(inputFile)
       .zipWithIndex
       .evalTap { (_, idx) => IO(if (idx % 100000 == 0) { println(s"Written $idx") }) }
-      .map { (json, _) => flattener(json) }
-      .map { json => stringifier(fos, json) }
+      .map { (json, idx) => (flattener(json), idx) }
+      .map { (json, idx) => stringifier(writer, json, idx) }
       .compile
       .drain
       .map { _ =>
-        if (!pandasMode) { fos.write("]".getBytes) }
-        fos.close()
+        if (!pandasMode) { writer.write("]".getBytes) }
+        writer.close()
       }
       .as(ExitCode(0))
   }
