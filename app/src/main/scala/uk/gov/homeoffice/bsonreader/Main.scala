@@ -114,21 +114,45 @@ object MainApp extends IOApp:
 
   def noOpFlatten(json :Json) :Json = json
 
+  def printUsage() :Unit = {
+    println("""
+bson to json convertor
+
+This is the format of the command:
+
+  java -jar bson-to-json.jar [--pandas] <input-file> [output-file]
+
+Examples:
+
+  # converts the file into json
+
+  json -jar bson-to-json.jar /tmp/myCollection.bson.gz /tmp/myJson.json
+
+  # specifying .json.gz as the output name will make the system write the
+  # file straight into gzip format, which significantly reduces file size
+
+  json -jar bson-to-json.jar /tmp/myCollection.bson.gz /tmp/myJson.json.gz
+
+  # pandas flag will flatten nested json so that it can be used in Pandas
+  # dataframes. The file will be one line per json object. Without this flag
+  # json is pretty printed and put in a json array (so the file starts and ends with [ ])
+
+  json -jar bson-to-json.jar --pandas /tmp/myCollection.bson.gz /tmp/myJson.json.gz
+
+  # omitting the output file if necessary, or read from a regular ungzipped bson file:
+
+  json -jar bson-to-json.jar --pandas /tmp/myCollection.bson
+""")
+  }
+
   def run(args: List[String]): IO[ExitCode] = {
 
-    if (args.contains("--help") || args.contains("-h")) {
-      println("bson to json convertor")
-      println("java -jar bson-to-json.jar [--pandas] <input-file> <output-file>")
-      println("    --pandas: flattens nested json into single depth json array so { 'hello' : { 'thing' : 4 }} becomes { 'hello.thing' : 4 }")
-      println("If the input file ends .gz then the file will be run through gzip decompression")
-      println("If the output file ends .json then the file will be json encoded, it if ends .csv it will be csv encoded")
-      println("If the output file ends .gz then the file will be compressed through gzip decompression")
-      println("    -h or --help: print help message and exit")
+    if (args.contains("help") || args.contains("--help") || args.contains("-h")) {
+      printUsage()
       return IO(ExitCode.Success)
-    } else if (args.length < 2) {
-      println("bson to json convertor")
-      println(s"expected two arguments, got ${args.length}")
-      return IO(ExitCode.Success)
+    } else if (args.length < 1) {
+      println("ERROR: missing filename argument. Use --help for usage")
+      return IO(ExitCode(1))
     }
 
     val inputFile = args.filterNot(_.startsWith("--")).lift(0).getOrElse("")
@@ -143,8 +167,8 @@ object MainApp extends IOApp:
     println(s"\nArguments read:\nInput file: $inputFile\nOutput file: $outputFile\nPandas Mode: $pandasMode\n")
 
     if (!NioFiles.exists(Paths.get(inputFile))) {
-      println(s"Input file does not exist: $inputFile")
-      sys.exit(1)
+      println(s"ERROR: Input file does not exist: $inputFile. Use --help for usage")
+      return IO(ExitCode(2))
     }
 
     val writer = jsonWriter(outputFile)
